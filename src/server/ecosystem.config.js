@@ -8,7 +8,10 @@ module.exports = {
     env: {
       NODE_ENV: "production",
       PORT: 3000,
-      API_KEY: "your-secure-api-key-here"
+      // This API key is used for authentication in the WordPress plugin
+      // You should change this to a secure random string
+      // Then use the same API key in the WordPress plugin settings
+      API_KEY: "change-me-to-a-secure-random-string"
     }
   }]
 }

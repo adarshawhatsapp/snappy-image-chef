@@ -1,4 +1,3 @@
-
 <?php
 /**
  * Plugin Name: Image Optimizer
@@ -68,15 +67,28 @@ class ImageOptimizer {
         
         // Admin hooks
         if (is_admin()) {
+            // Add main menu item
             add_action('admin_menu', [$this, 'admin_menu']);
             add_action('admin_init', [$this, 'register_settings']);
             add_action('wp_ajax_optimize_image', [$this, 'ajax_optimize_image']);
             add_action('wp_ajax_optimize_all_images', [$this, 'ajax_optimize_all_images']);
+            add_action('wp_ajax_test_connection', [$this, 'ajax_test_connection']);
+            
+            // Add settings link on plugin page
+            add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'plugin_action_links']);
+            
+            // Add optimize button to media library
+            add_filter('attachment_fields_to_edit', [$this, 'add_optimize_button_to_media'], 10, 2);
+            add_filter('media_row_actions', [$this, 'add_optimize_row_action'], 10, 2);
+            
+            // Enqueue admin scripts and styles
+            add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
         }
         
         // Frontend hooks
         add_filter('wp_get_attachment_image_src', [$this, 'filter_attachment_image_src'], 10, 4);
         add_filter('wp_calculate_image_srcset', [$this, 'filter_image_srcset'], 10, 5);
+        add_filter('the_content', [$this, 'filter_content_images']);
         
         // Upload hooks
         if ($this->settings['auto_optimize'] === 'yes') {
@@ -117,23 +129,92 @@ class ImageOptimizer {
     }
 
     /**
+     * Enqueue admin scripts and styles
+     */
+    public function enqueue_admin_scripts($hook) {
+        // Only load on our plugin pages
+        if (strpos($hook, 'image-optimizer') !== false || $hook === 'upload.php' || $hook === 'post.php') {
+            wp_enqueue_style('image-optimizer-admin', plugin_dir_url(__FILE__) . 'admin/css/admin.css', [], IMAGE_OPTIMIZER_VERSION);
+            wp_enqueue_script('image-optimizer-admin', plugin_dir_url(__FILE__) . 'admin/js/admin.js', ['jquery'], IMAGE_OPTIMIZER_VERSION, true);
+            
+            wp_localize_script('image-optimizer-admin', 'imageOptimizerVars', [
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('image_optimizer_nonce'),
+                'optimizing' => __('Optimizing...', 'image-optimizer'),
+                'optimized' => __('Optimized!', 'image-optimizer'),
+                'failed' => __('Failed!', 'image-optimizer'),
+            ]);
+        }
+    }
+
+    /**
+     * Add plugin action links
+     */
+    public function plugin_action_links($links) {
+        $settings_link = '<a href="' . admin_url('admin.php?page=image-optimizer-settings') . '">' . __('Settings', 'image-optimizer') . '</a>';
+        array_unshift($links, $settings_link);
+        return $links;
+    }
+
+    /**
      * Register admin menu
      */
     public function admin_menu() {
-        add_options_page(
-            __('Image Optimizer Settings', 'image-optimizer'),
+        // Add main menu item
+        add_menu_page(
+            __('Image Optimizer', 'image-optimizer'),
             __('Image Optimizer', 'image-optimizer'),
             'manage_options',
             'image-optimizer',
-            [$this, 'render_settings_page']
+            [$this, 'render_dashboard_page'],
+            'dashicons-images-alt2',
+            81
         );
         
-        add_media_page(
-            __('Optimize Images', 'image-optimizer'),
-            __('Optimize Images', 'image-optimizer'),
+        // Add submenu items
+        add_submenu_page(
+            'image-optimizer',
+            __('Dashboard', 'image-optimizer'),
+            __('Dashboard', 'image-optimizer'),
+            'manage_options',
+            'image-optimizer',
+            [$this, 'render_dashboard_page']
+        );
+        
+        add_submenu_page(
+            'image-optimizer',
+            __('Bulk Optimization', 'image-optimizer'),
+            __('Bulk Optimization', 'image-optimizer'),
             'manage_options',
             'image-optimizer-bulk',
             [$this, 'render_bulk_optimization_page']
+        );
+        
+        add_submenu_page(
+            'image-optimizer',
+            __('Individual Images', 'image-optimizer'),
+            __('Individual Images', 'image-optimizer'),
+            'manage_options',
+            'image-optimizer-individual',
+            [$this, 'render_individual_optimization_page']
+        );
+        
+        add_submenu_page(
+            'image-optimizer',
+            __('Statistics', 'image-optimizer'),
+            __('Statistics', 'image-optimizer'),
+            'manage_options',
+            'image-optimizer-stats',
+            [$this, 'render_statistics_page']
+        );
+        
+        add_submenu_page(
+            'image-optimizer',
+            __('Settings', 'image-optimizer'),
+            __('Settings', 'image-optimizer'),
+            'manage_options',
+            'image-optimizer-settings',
+            [$this, 'render_settings_page']
         );
     }
 
@@ -147,14 +228,14 @@ class ImageOptimizer {
             'image_optimizer_server_settings',
             __('Server Settings', 'image-optimizer'),
             [$this, 'render_server_settings_section'],
-            'image-optimizer'
+            'image-optimizer-settings'
         );
         
         add_settings_section(
             'image_optimizer_optimization_settings',
             __('Optimization Settings', 'image-optimizer'),
             [$this, 'render_optimization_settings_section'],
-            'image-optimizer'
+            'image-optimizer-settings'
         );
         
         // Server URL
@@ -162,7 +243,7 @@ class ImageOptimizer {
             'server_url',
             __('Optimization Server URL', 'image-optimizer'),
             [$this, 'render_server_url_field'],
-            'image-optimizer',
+            'image-optimizer-settings',
             'image_optimizer_server_settings'
         );
         
@@ -171,7 +252,7 @@ class ImageOptimizer {
             'api_key',
             __('API Key', 'image-optimizer'),
             [$this, 'render_api_key_field'],
-            'image-optimizer',
+            'image-optimizer-settings',
             'image_optimizer_server_settings'
         );
         
@@ -180,7 +261,7 @@ class ImageOptimizer {
             'auto_optimize',
             __('Auto-Optimize New Uploads', 'image-optimizer'),
             [$this, 'render_auto_optimize_field'],
-            'image-optimizer',
+            'image-optimizer-settings',
             'image_optimizer_optimization_settings'
         );
         
@@ -189,7 +270,7 @@ class ImageOptimizer {
             'replace_originals',
             __('Replace Original Images', 'image-optimizer'),
             [$this, 'render_replace_originals_field'],
-            'image-optimizer',
+            'image-optimizer-settings',
             'image_optimizer_optimization_settings'
         );
         
@@ -198,7 +279,7 @@ class ImageOptimizer {
             'output_format',
             __('Output Format', 'image-optimizer'),
             [$this, 'render_output_format_field'],
-            'image-optimizer',
+            'image-optimizer-settings',
             'image_optimizer_optimization_settings'
         );
         
@@ -207,7 +288,7 @@ class ImageOptimizer {
             'image_quality',
             __('Image Quality', 'image-optimizer'),
             [$this, 'render_image_quality_field'],
-            'image-optimizer',
+            'image-optimizer-settings',
             'image_optimizer_optimization_settings'
         );
         
@@ -216,9 +297,106 @@ class ImageOptimizer {
             'max_width',
             __('Maximum Width (pixels)', 'image-optimizer'),
             [$this, 'render_max_width_field'],
-            'image-optimizer',
+            'image-optimizer-settings',
             'image_optimizer_optimization_settings'
         );
+    }
+
+    /**
+     * Render dashboard page
+     */
+    public function render_dashboard_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        
+        // Get statistics
+        $stats = $this->get_optimization_stats();
+        ?>
+        <div class="wrap">
+            <h1><?php _e('Image Optimizer Dashboard', 'image-optimizer'); ?></h1>
+            
+            <div class="card">
+                <h2><?php _e('Optimization Summary', 'image-optimizer'); ?></h2>
+                
+                <div class="image-optimizer-stats-grid">
+                    <div class="stat-box">
+                        <h3><?php _e('Total Images', 'image-optimizer'); ?></h3>
+                        <div class="stat-value"><?php echo $stats['total_images']; ?></div>
+                    </div>
+                    
+                    <div class="stat-box">
+                        <h3><?php _e('Optimized Images', 'image-optimizer'); ?></h3>
+                        <div class="stat-value"><?php echo $stats['optimized_images']; ?></div>
+                    </div>
+                    
+                    <div class="stat-box">
+                        <h3><?php _e('Space Saved', 'image-optimizer'); ?></h3>
+                        <div class="stat-value"><?php echo $this->format_bytes($stats['total_savings']); ?></div>
+                    </div>
+                    
+                    <div class="stat-box">
+                        <h3><?php _e('Average Savings', 'image-optimizer'); ?></h3>
+                        <div class="stat-value"><?php echo $stats['average_savings_percent']; ?>%</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card-grid">
+                <div class="card">
+                    <h2><?php _e('Quick Actions', 'image-optimizer'); ?></h2>
+                    <a href="<?php echo admin_url('admin.php?page=image-optimizer-bulk'); ?>" class="button button-primary"><?php _e('Bulk Optimize', 'image-optimizer'); ?></a>
+                    <a href="<?php echo admin_url('admin.php?page=image-optimizer-individual'); ?>" class="button button-secondary"><?php _e('Select Individual Images', 'image-optimizer'); ?></a>
+                    <a href="<?php echo admin_url('admin.php?page=image-optimizer-settings'); ?>" class="button button-secondary"><?php _e('Configure Settings', 'image-optimizer'); ?></a>
+                </div>
+                
+                <div class="card">
+                    <h2><?php _e('Server Status', 'image-optimizer'); ?></h2>
+                    <div id="server-status">
+                        <p><?php _e('Checking server status...', 'image-optimizer'); ?></p>
+                    </div>
+                    <button id="check-server" class="button button-secondary"><?php _e('Check Server Status', 'image-optimizer'); ?></button>
+                </div>
+            </div>
+            
+            <script>
+            jQuery(document).ready(function($) {
+                $('#check-server').on('click', function() {
+                    var $button = $(this);
+                    var $status = $('#server-status');
+                    
+                    $button.prop('disabled', true);
+                    $status.html('<p><?php _e('Checking server status...', 'image-optimizer'); ?></p>');
+                    
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'test_connection',
+                            nonce: imageOptimizerVars.nonce
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                $status.html('<p class="server-status-ok"><?php _e('Server is online and responding.', 'image-optimizer'); ?></p>');
+                            } else {
+                                $status.html('<p class="server-status-error"><?php _e('Error connecting to server:', 'image-optimizer'); ?> ' + response.data + '</p>');
+                            }
+                        },
+                        error: function() {
+                            $status.html('<p class="server-status-error"><?php _e('Connection test failed. Please check your server settings.', 'image-optimizer'); ?></p>');
+                        },
+                        complete: function() {
+                            $button.prop('disabled', false);
+                        }
+                    });
+                });
+                
+                // Initial check
+                $('#check-server').trigger('click');
+            });
+            </script>
+        </div>
+        <?php
     }
 
     /**
@@ -253,7 +431,7 @@ class ImageOptimizer {
         $api_key = isset($this->settings['api_key']) ? esc_attr($this->settings['api_key']) : '';
         ?>
         <input type="text" name="image_optimizer_settings[api_key]" value="<?php echo $api_key; ?>" class="regular-text">
-        <p class="description"><?php _e('API key for authorization', 'image-optimizer'); ?></p>
+        <p class="description"><?php _e('API key for authorization. This should match the API_KEY in your server\'s ecosystem.config.js file.', 'image-optimizer'); ?></p>
         <?php
     }
 
@@ -338,7 +516,7 @@ class ImageOptimizer {
             <form action="options.php" method="post">
                 <?php
                 settings_fields('image_optimizer_settings');
-                do_settings_sections('image-optimizer');
+                do_settings_sections('image-optimizer-settings');
                 submit_button();
                 ?>
             </form>
@@ -367,7 +545,7 @@ class ImageOptimizer {
                     type: 'POST',
                     data: {
                         action: 'test_connection',
-                        nonce: '<?php echo wp_create_nonce('test_connection'); ?>'
+                        nonce: imageOptimizerVars.nonce
                     },
                     success: function(response) {
                         if (response.success) {
@@ -386,6 +564,137 @@ class ImageOptimizer {
             });
         });
         </script>
+        <?php
+    }
+
+    /**
+     * Render individual optimization page
+     */
+    public function render_individual_optimization_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        
+        // Get images
+        $args = [
+            'post_type' => 'attachment',
+            'post_mime_type' => ['image/jpeg', 'image/png', 'image/gif'],
+            'post_status' => 'inherit',
+            'posts_per_page' => 20,
+            'paged' => isset($_GET['paged']) ? intval($_GET['paged']) : 1,
+        ];
+        
+        $query = new WP_Query($args);
+        ?>
+        <div class="wrap">
+            <h1><?php _e('Optimize Individual Images', 'image-optimizer'); ?></h1>
+            
+            <div class="card">
+                <p><?php _e('Select individual images to optimize. Click the "Optimize" button next to each image.', 'image-optimizer'); ?></p>
+                
+                <div class="image-grid">
+                    <?php if ($query->have_posts()) : ?>
+                        <?php while ($query->have_posts()) : $query->the_post(); ?>
+                            <?php
+                            $attachment_id = get_the_ID();
+                            $attachment_url = wp_get_attachment_url($attachment_id);
+                            $metadata = wp_get_attachment_metadata($attachment_id);
+                            $is_optimized = !empty($metadata['optimized_image']);
+                            $optimized_class = $is_optimized ? 'optimized' : '';
+                            $optimized_text = $is_optimized ? __('Re-optimize', 'image-optimizer') : __('Optimize', 'image-optimizer');
+                            $savings = $is_optimized ? $metadata['optimized_image']['savings_percent'] : 0;
+                            ?>
+                            <div class="image-item <?php echo $optimized_class; ?>" data-id="<?php echo $attachment_id; ?>">
+                                <div class="image-preview">
+                                    <?php echo wp_get_attachment_image($attachment_id, 'thumbnail'); ?>
+                                    <?php if ($is_optimized) : ?>
+                                        <span class="optimization-badge"><?php echo $savings; ?>% <?php _e('Saved', 'image-optimizer'); ?></span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="image-details">
+                                    <h4><?php echo get_the_title(); ?></h4>
+                                    <p class="image-meta">
+                                        <?php echo isset($metadata['width']) ? $metadata['width'] . 'x' . $metadata['height'] : ''; ?>
+                                        <?php echo $this->format_bytes(filesize(get_attached_file($attachment_id))); ?>
+                                    </p>
+                                    <button class="optimize-image button button-secondary" data-id="<?php echo $attachment_id; ?>">
+                                        <?php echo $optimized_text; ?>
+                                    </button>
+                                    <div class="optimization-status"></div>
+                                </div>
+                            </div>
+                        <?php endwhile; ?>
+                    <?php else : ?>
+                        <p><?php _e('No images found.', 'image-optimizer'); ?></p>
+                    <?php endif; ?>
+                </div>
+                
+                <?php
+                $total_pages = $query->max_num_pages;
+                if ($total_pages > 1) {
+                    echo '<div class="pagination">';
+                    echo paginate_links([
+                        'base' => add_query_arg('paged', '%#%'),
+                        'format' => '',
+                        'prev_text' => __('&laquo;'),
+                        'next_text' => __('&raquo;'),
+                        'total' => $total_pages,
+                        'current' => max(1, isset($_GET['paged']) ? intval($_GET['paged']) : 1),
+                    ]);
+                    echo '</div>';
+                }
+                wp_reset_postdata();
+                ?>
+                
+                <script>
+                jQuery(document).ready(function($) {
+                    $('.optimize-image').on('click', function() {
+                        var $button = $(this);
+                        var attachmentId = $button.data('id');
+                        var $status = $button.siblings('.optimization-status');
+                        
+                        $button.prop('disabled', true);
+                        $status.html(imageOptimizerVars.optimizing);
+                        
+                        $.ajax({
+                            url: ajaxurl,
+                            type: 'POST',
+                            data: {
+                                action: 'optimize_image',
+                                id: attachmentId,
+                                nonce: imageOptimizerVars.nonce
+                            },
+                            success: function(response) {
+                                if (response.success) {
+                                    $status.html(imageOptimizerVars.optimized + ' ' + response.data.savings + '% saved');
+                                    $button.closest('.image-item').addClass('optimized');
+                                    $button.text('<?php _e('Re-optimize', 'image-optimizer'); ?>');
+                                    
+                                    // Add or update optimization badge
+                                    var $badge = $button.closest('.image-item').find('.optimization-badge');
+                                    if ($badge.length) {
+                                        $badge.text(response.data.savings + '% <?php _e('Saved', 'image-optimizer'); ?>');
+                                    } else {
+                                        $button.closest('.image-item').find('.image-preview').append(
+                                            '<span class="optimization-badge">' + response.data.savings + '% <?php _e('Saved', 'image-optimizer'); ?></span>'
+                                        );
+                                    }
+                                } else {
+                                    $status.html(imageOptimizerVars.failed + ': ' + response.data);
+                                }
+                            },
+                            error: function() {
+                                $status.html(imageOptimizerVars.failed);
+                            },
+                            complete: function() {
+                                $button.prop('disabled', false);
+                            }
+                        });
+                    });
+                });
+                </script>
+            </div>
+        </div>
         <?php
     }
 
@@ -494,7 +803,7 @@ class ImageOptimizer {
                     data: {
                         action: 'optimize_image',
                         id: imageId,
-                        nonce: '<?php echo wp_create_nonce('optimize_image'); ?>'
+                        nonce: imageOptimizerVars.nonce
                     },
                     success: function(response) {
                         optimization.processedImages++;
@@ -531,424 +840,4 @@ class ImageOptimizer {
                             title: ''
                         });
                         
-                        updateProgress();
-                        processNextImage();
-                    }
-                });
-            }
-            
-            function updateProgress() {
-                var progressPercent = (optimization.processedImages / optimization.totalImages) * 100;
-                $('.progress-bar').css('width', progressPercent + '%');
-                $('.progress-count').text(optimization.processedImages);
-            }
-            
-            function showResults() {
-                var totalSaved = 0;
-                
-                for (var i = 0; i < optimization.results.length; i++) {
-                    var result = optimization.results[i];
-                    if (result.success) {
-                        totalSaved += parseFloat(result.savings);
-                    }
-                }
-                
-                var html = '<h3><?php _e('Optimization Results', 'image-optimizer'); ?></h3>';
-                html += '<p><?php _e('Processed Images', 'image-optimizer'); ?>: ' + optimization.processedImages + '/' + optimization.totalImages + '</p>';
-                html += '<p><?php _e('Successful Optimizations', 'image-optimizer'); ?>: ' + optimization.successfulOptimizations + '</p>';
-                html += '<p><?php _e('Failed Optimizations', 'image-optimizer'); ?>: ' + optimization.failedOptimizations + '</p>';
-                html += '<p><?php _e('Total Space Saved', 'image-optimizer'); ?>: ' + formatBytes(totalSaved) + '</p>';
-                
-                if (optimization.failedOptimizations > 0) {
-                    html += '<h4><?php _e('Errors', 'image-optimizer'); ?></h4>';
-                    html += '<ul>';
-                    
-                    for (var i = 0; i < optimization.results.length; i++) {
-                        var result = optimization.results[i];
-                        if (!result.success) {
-                            html += '<li>ID ' + result.id + ': ' + result.error + '</li>';
-                        }
-                    }
-                    
-                    html += '</ul>';
-                }
-                
-                $('#optimization-results').html(html);
-            }
-            
-            function formatBytes(bytes) {
-                if (bytes < 1024) {
-                    return bytes + ' B';
-                } else if (bytes < 1048576) {
-                    return (bytes / 1024).toFixed(2) + ' KB';
-                } else {
-                    return (bytes / 1048576).toFixed(2) + ' MB';
-                }
-            }
-        });
-        </script>
-        <?php
-    }
-
-    /**
-     * Ajax optimize image
-     */
-    public function ajax_optimize_image() {
-        // Check nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'optimize_image')) {
-            wp_send_json_error(__('Invalid nonce', 'image-optimizer'));
-        }
-        
-        // Check permissions
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(__('Insufficient permissions', 'image-optimizer'));
-        }
-        
-        // Check parameters
-        if (!isset($_POST['id'])) {
-            wp_send_json_error(__('Missing attachment ID', 'image-optimizer'));
-        }
-        
-        $attachment_id = intval($_POST['id']);
-        
-        // Get attachment
-        $attachment = get_post($attachment_id);
-        if (!$attachment) {
-            wp_send_json_error(__('Attachment not found', 'image-optimizer'));
-        }
-        
-        // Check if attachment is an image
-        if (!wp_attachment_is_image($attachment_id)) {
-            wp_send_json_error(__('Attachment is not an image', 'image-optimizer'));
-        }
-        
-        // Get attachment file
-        $file_path = get_attached_file($attachment_id);
-        if (!$file_path || !file_exists($file_path)) {
-            wp_send_json_error(__('Attachment file not found', 'image-optimizer'));
-        }
-        
-        // Optimize image
-        $result = $this->optimize_attachment($attachment_id);
-        
-        if (is_wp_error($result)) {
-            wp_send_json_error($result->get_error_message());
-        }
-        
-        wp_send_json_success([
-            'title' => $attachment->post_title,
-            'savings' => $result['savings'],
-        ]);
-    }
-
-    /**
-     * Ajax optimize all images
-     */
-    public function ajax_optimize_all_images() {
-        // Check nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'optimize_all_images')) {
-            wp_send_json_error(__('Invalid nonce', 'image-optimizer'));
-        }
-        
-        // Check permissions
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(__('Insufficient permissions', 'image-optimizer'));
-        }
-        
-        // Get all images
-        $args = [
-            'post_type' => 'attachment',
-            'post_mime_type' => ['image/jpeg', 'image/png', 'image/gif'],
-            'post_status' => 'inherit',
-            'posts_per_page' => -1,
-            'fields' => 'ids',
-        ];
-        $images = get_posts($args);
-        
-        // Start optimization
-        wp_send_json_success([
-            'total' => count($images),
-            'ids' => $images,
-        ]);
-    }
-
-    /**
-     * Handle upload
-     */
-    public function handle_upload($file, $context) {
-        // Skip optimization if not an image
-        if (!preg_match('/^image\/(jpeg|png|gif)$/i', $file['type'])) {
-            return $file;
-        }
-        
-        // Skip optimization if server URL is not set
-        if (empty($this->settings['server_url'])) {
-            return $file;
-        }
-        
-        // Get file path
-        $file_path = $file['file'];
-        
-        // Get file info
-        $pathinfo = pathinfo($file_path);
-        $upload_dir = wp_upload_dir();
-        
-        // Define output format and filename
-        $format = $this->settings['output_format'];
-        $optimized_filename = $pathinfo['filename'] . '.' . $format;
-        $optimized_path = $pathinfo['dirname'] . '/' . $optimized_filename;
-        
-        // Optimize image
-        $result = $this->optimize_image($file_path, $optimized_path);
-        
-        if (is_wp_error($result)) {
-            // Log error
-            error_log('Image Optimizer: ' . $result->get_error_message());
-            return $file;
-        }
-        
-        // Update metadata
-        $file['optimized_url'] = str_replace($upload_dir['basedir'], $upload_dir['baseurl'], $optimized_path);
-        $file['optimized_path'] = $optimized_path;
-        $file['optimization_savings'] = $result['savings'];
-        
-        // If replace originals is enabled, replace the original file
-        if ($this->settings['replace_originals'] === 'yes') {
-            // Backup original file
-            copy($file_path, $file_path . '.bak');
-            
-            // Replace original file
-            rename($optimized_path, $file_path);
-        }
-        
-        return $file;
-    }
-
-    /**
-     * Optimize attachment
-     */
-    public function optimize_attachment($attachment_id) {
-        // Get attachment file
-        $file_path = get_attached_file($attachment_id);
-        if (!$file_path || !file_exists($file_path)) {
-            return new WP_Error('file_not_found', __('Attachment file not found', 'image-optimizer'));
-        }
-        
-        // Get attachment metadata
-        $metadata = wp_get_attachment_metadata($attachment_id);
-        
-        // Get file info
-        $pathinfo = pathinfo($file_path);
-        $upload_dir = wp_upload_dir();
-        
-        // Define output format and filename
-        $format = $this->settings['output_format'];
-        $optimized_filename = $pathinfo['filename'] . '.' . $format;
-        $optimized_dir = $upload_dir['basedir'] . '/optimized/' . $pathinfo['dirname'];
-        $optimized_path = $optimized_dir . '/' . $optimized_filename;
-        
-        // Create optimized directory if it doesn't exist
-        if (!file_exists($optimized_dir)) {
-            wp_mkdir_p($optimized_dir);
-        }
-        
-        // Optimize image
-        $result = $this->optimize_image($file_path, $optimized_path);
-        
-        if (is_wp_error($result)) {
-            return $result;
-        }
-        
-        // Update attachment metadata
-        $metadata['optimized_image'] = [
-            'file' => 'optimized/' . $pathinfo['dirname'] . '/' . $optimized_filename,
-            'width' => $result['width'],
-            'height' => $result['height'],
-            'mime_type' => 'image/' . $format,
-            'filesize' => filesize($optimized_path),
-            'original_filesize' => filesize($file_path),
-            'savings' => $result['savings'],
-            'savings_percent' => $result['savings_percent'],
-        ];
-        
-        wp_update_attachment_metadata($attachment_id, $metadata);
-        
-        // If replace originals is enabled, replace the original file
-        if ($this->settings['replace_originals'] === 'yes') {
-            // Backup original file
-            copy($file_path, $file_path . '.bak');
-            
-            // Replace original file
-            rename($optimized_path, $file_path);
-            
-            // Update attachment metadata
-            $metadata['file'] = str_replace($upload_dir['basedir'] . '/', '', $file_path);
-            $metadata['mime_type'] = 'image/' . $format;
-            $metadata['width'] = $result['width'];
-            $metadata['height'] = $result['height'];
-            $metadata['filesize'] = filesize($file_path);
-            
-            wp_update_attachment_metadata($attachment_id, $metadata);
-        }
-        
-        return $result;
-    }
-
-    /**
-     * Optimize image
-     */
-    public function optimize_image($source_path, $destination_path) {
-        // Check if server URL is set
-        if (empty($this->settings['server_url'])) {
-            return new WP_Error('server_url_not_set', __('Server URL is not set', 'image-optimizer'));
-        }
-        
-        // Check if source file exists
-        if (!file_exists($source_path)) {
-            return new WP_Error('source_file_not_found', __('Source file not found', 'image-optimizer'));
-        }
-        
-        // Prepare request
-        $url = rtrim($this->settings['server_url'], '/') . '/optimize';
-        $url = add_query_arg([
-            'format' => $this->settings['output_format'],
-            'quality' => $this->settings['image_quality'],
-            'maxWidth' => $this->settings['max_width'],
-            'return' => 'binary',
-        ], $url);
-        
-        // Prepare file for upload
-        $file_content = file_get_contents($source_path);
-        $boundary = wp_generate_password(24);
-        $headers = [
-            'Content-Type' => 'multipart/form-data; boundary=' . $boundary,
-            'X-API-Key' => $this->settings['api_key'],
-        ];
-        
-        // Build multipart request body
-        $body = '--' . $boundary . "\r\n";
-        $body .= 'Content-Disposition: form-data; name="image"; filename="' . basename($source_path) . '"' . "\r\n";
-        $body .= 'Content-Type: ' . mime_content_type($source_path) . "\r\n\r\n";
-        $body .= $file_content . "\r\n";
-        $body .= '--' . $boundary . '--';
-        
-        // Send request
-        $response = wp_remote_post($url, [
-            'headers' => $headers,
-            'body' => $body,
-            'timeout' => 60,
-            'redirection' => 5,
-            'httpversion' => '1.1',
-            'sslverify' => false,
-        ]);
-        
-        // Check for errors
-        if (is_wp_error($response)) {
-            return $response;
-        }
-        
-        // Check response code
-        $response_code = wp_remote_retrieve_response_code($response);
-        if ($response_code !== 200) {
-            $error_message = wp_remote_retrieve_response_message($response);
-            if (empty($error_message)) {
-                $error_message = __('Unknown error', 'image-optimizer');
-            }
-            return new WP_Error('server_error', sprintf(__('Server returned error: %s', 'image-optimizer'), $error_message));
-        }
-        
-        // Get response body
-        $body = wp_remote_retrieve_body($response);
-        if (empty($body)) {
-            return new WP_Error('empty_response', __('Empty response from server', 'image-optimizer'));
-        }
-        
-        // Save optimized image
-        $result = file_put_contents($destination_path, $body);
-        if ($result === false) {
-            return new WP_Error('save_failed', __('Failed to save optimized image', 'image-optimizer'));
-        }
-        
-        // Get optimization statistics
-        $original_size = filesize($source_path);
-        $optimized_size = filesize($destination_path);
-        $savings = $original_size - $optimized_size;
-        $savings_percent = round(($savings / $original_size) * 100, 2);
-        
-        // Get image dimensions
-        $dimensions = getimagesize($destination_path);
-        
-        return [
-            'width' => $dimensions[0],
-            'height' => $dimensions[1],
-            'original_size' => $original_size,
-            'optimized_size' => $optimized_size,
-            'savings' => $savings,
-            'savings_percent' => $savings_percent,
-        ];
-    }
-
-    /**
-     * Filter attachment image source
-     */
-    public function filter_attachment_image_src($image, $attachment_id, $size, $icon) {
-        // Skip if no attachment ID
-        if (empty($attachment_id)) {
-            return $image;
-        }
-        
-        // Get attachment metadata
-        $metadata = wp_get_attachment_metadata($attachment_id);
-        
-        // Skip if no optimized image
-        if (empty($metadata['optimized_image'])) {
-            return $image;
-        }
-        
-        // Get optimized image URL
-        $upload_dir = wp_upload_dir();
-        $optimized_url = $upload_dir['baseurl'] . '/' . $metadata['optimized_image']['file'];
-        
-        // Return optimized image URL
-        return [
-            $optimized_url,
-            $metadata['optimized_image']['width'],
-            $metadata['optimized_image']['height'],
-            true,
-        ];
-    }
-
-    /**
-     * Filter image srcset
-     */
-    public function filter_image_srcset($sources, $size_array, $image_src, $image_meta, $attachment_id) {
-        // Skip if no attachment ID
-        if (empty($attachment_id)) {
-            return $sources;
-        }
-        
-        // Get attachment metadata
-        $metadata = wp_get_attachment_metadata($attachment_id);
-        
-        // Skip if no optimized image
-        if (empty($metadata['optimized_image'])) {
-            return $sources;
-        }
-        
-        // Get optimized image URL
-        $upload_dir = wp_upload_dir();
-        $optimized_url = $upload_dir['baseurl'] . '/' . $metadata['optimized_image']['file'];
-        
-        // Add optimized image to srcset
-        $sources[$metadata['optimized_image']['width']] = [
-            'url' => $optimized_url,
-            'descriptor' => 'w',
-            'value' => $metadata['optimized_image']['width'],
-        ];
-        
-        return $sources;
-    }
-}
-
-// Initialize plugin
-ImageOptimizer::get_instance();
+                        update
