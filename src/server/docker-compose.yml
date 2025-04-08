@@ -1,0 +1,19 @@
+
+version: '3'
+
+services:
+  image-optimizer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: image-optimizer
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - API_KEY=your-secure-api-key-here

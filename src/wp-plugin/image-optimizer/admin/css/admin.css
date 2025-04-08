@@ -1,0 +1,85 @@
+
+/**
+ * Admin styles for Image Optimizer
+ */
+.image-optimizer-settings {
+    max-width: 800px;
+}
+
+.image-optimizer-card {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin-top: 20px;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+.progress-bar-container {
+    height: 20px;
+    background-color: #f0f0f0;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.progress-bar {
+    width: 0%;
+    height: 100%;
+    background-color: #0073aa;
+    transition: width 0.3s ease;
+}
+
+.optimization-stats {
+    display: flex;
+    flex-wrap: wrap;
+    margin: 20px 0;
+}
+
+.stat-box {
+    background: #f9f9f9;
+    border: 1px solid #e5e5e5;
+    border-radius: 3px;
+    padding: 15px;
+    margin-right: 15px;
+    margin-bottom: 15px;
+    min-width: 150px;
+    text-align: center;
+}
+
+.stat-number {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.stat-label {
+    color: #666;
+}
+
+.comparison-container {
+    display: flex;
+    margin: 20px 0;
+}
+
+.comparison-image {
+    flex: 1;
+    padding: 10px;
+    text-align: center;
+}
+
+.comparison-image img {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid #ddd;
+}
+
+.comparison-label {
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+.comparison-size {
+    margin-top: 5px;
+    color: #666;
+}
